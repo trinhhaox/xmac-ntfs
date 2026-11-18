@@ -6,6 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/// The first error from closing the kept-open file since the last call.
+static int take_deferred(xntfs_vol *v) {
+    int rc = v->deferred_err;
+    v->deferred_err = 0;
+    return rc;
+}
+
 int xntfs_mount(const xntfs_io *io, int want_write, xntfs_vol **out, int *ro_reason) {
     *out = NULL;
     if (ro_reason) *ro_reason = XNTFS_MOUNT_WRITABLE;
@@ -36,7 +43,7 @@ int xntfs_mount(const xntfs_io *io, int want_write, xntfs_vol **out, int *ro_rea
         int err = !v ? ENOMEM : (errno ? errno : EIO);
         void *dev_private = dev->d_private;
         ntfs_umount(vol, FALSE);  // frees `dev` but not our callback state
-        free(dev_private);
+        xntfs_device_private_free(dev_private);
         free(v);
         return err;
     }
@@ -49,9 +56,12 @@ int xntfs_mount(const xntfs_io *io, int want_write, xntfs_vol **out, int *ro_rea
 int xntfs_unmount(xntfs_vol *v) {
     if (!v) return 0;
     pthread_mutex_lock(&v->lock);
+    xntfs_close_open_file(v);
+    int deferred = take_deferred(v);
     void *dev_private = v->vol->dev->d_private;
     int rc = ntfs_umount(v->vol, FALSE) ? (errno ? errno : EIO) : 0;
-    free(dev_private);  // ntfs_umount freed the device but not our callback state
+    if (!rc) rc = deferred;
+    xntfs_device_private_free(dev_private);  // ntfs_umount freed the device but not our callback state
     pthread_mutex_unlock(&v->lock);
     pthread_mutex_destroy(&v->lock);
     free(v);
@@ -63,6 +73,9 @@ int xntfs_is_readonly(xntfs_vol *v) {
 }
 
 static int sync_locked(xntfs_vol *v) {
+    // XNTFS_LOCKED already closed the kept-open file; report how that went.
+    int deferred = take_deferred(v);
+    if (deferred) return deferred;
     if (NVolReadOnly(v->vol)) return 0;
     // Flushes cached MFT / bitmap state, then the device.
     if (ntfs_inode_sync(v->vol->mft_ni)) return errno ? errno : EIO;
@@ -104,7 +117,7 @@ int xntfs_get_label(xntfs_vol *v, char *buf, size_t bufsize) {
 }
 
 int xntfs_get_statfs(xntfs_vol *v, xntfs_statfs *out) {
-    return XNTFS_LOCKED(v, statfs_locked(v, out));
+    return XNTFS_LOCKED_KEEP(v, statfs_locked(v, out));
 }
 
 int xntfs_name_to_ucs(const char *name, ntfschar **out) {

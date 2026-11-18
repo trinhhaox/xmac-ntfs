@@ -66,6 +66,15 @@ int xntfs_fill_stat(ntfs_inode *ni, xntfs_stat *out) {
 }
 
 int xntfs_getattr_unlocked(xntfs_vol *v, uint64_t ino, xntfs_stat *out) {
+    // Never open a second copy of the file kept open for writing: read it from that copy.
+    ntfs_inode *kept = xntfs_kept_inode(v, ino);
+    if (kept) {
+        int rc = xntfs_fill_stat(kept, out);
+        if (!rc && v->open_na && !(kept->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
+            out->size = (uint64_t)v->open_na->data_size;  // the live size, ahead of the record
+        }
+        return rc;
+    }
     ntfs_inode *ni = ntfs_inode_open(v->vol, ino);
     if (!ni) return err_or(ENOENT);
     int rc = xntfs_fill_stat(ni, out);
@@ -74,7 +83,7 @@ int xntfs_getattr_unlocked(xntfs_vol *v, uint64_t ino, xntfs_stat *out) {
 }
 
 int xntfs_getattr(xntfs_vol *v, uint64_t ino, xntfs_stat *out) {
-    return XNTFS_LOCKED(v, xntfs_getattr_unlocked(v, ino, out));
+    return XNTFS_LOCKED_KEEP(v, xntfs_getattr_unlocked(v, ino, out));
 }
 
 static int lookup_locked(xntfs_vol *v, uint64_t dir, const char *name, xntfs_stat *out) {
@@ -91,7 +100,7 @@ static int lookup_locked(xntfs_vol *v, uint64_t dir, const char *name, xntfs_sta
 }
 
 int xntfs_lookup(xntfs_vol *v, uint64_t dir, const char *name, xntfs_stat *out) {
-    return XNTFS_LOCKED(v, lookup_locked(v, dir, name, out));
+    return XNTFS_LOCKED_KEEP(v, lookup_locked(v, dir, name, out));
 }
 
 typedef struct {
@@ -132,7 +141,7 @@ static int readdir_locked(xntfs_vol *v, uint64_t dir, xntfs_dirent_cb cb, void *
 }
 
 int xntfs_readdir(xntfs_vol *v, uint64_t dir, xntfs_dirent_cb cb, void *ctx) {
-    return XNTFS_LOCKED(v, readdir_locked(v, dir, cb, ctx));
+    return XNTFS_LOCKED_KEEP(v, readdir_locked(v, dir, cb, ctx));
 }
 
 static int readlink_locked(xntfs_vol *v, uint64_t ino, char *buf, size_t bufsize) {

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Name-only file system bundle. DiskArbitration and Disk Utility look up a volume's
+	     display name by its FSKit short name ("xmacntfs") in /Library/Filesystems; without
+	     it they label Xmac NTFS volumes "MS-DOS". It contains no code. -->
+	<key>CFBundleIdentifier</key><string>vn.xmac.filesystems.xmacntfs</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>xmacntfs</string>
+	<key>CFBundlePackageType</key><string>fs  </string>
+	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>FSImplementation</key><array><string>UserFS</string></array>
+	<key>FSPersonalities</key>
+	<dict>
+		<key>NTFS</key>
+		<dict>
+			<key>FSName</key><string>Windows NT File System (NTFS)</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -3,6 +3,7 @@
 // libntfs-3g issues byte-granular I/O; block devices need sector-aligned I/O, so unaligned
 // requests go through a bounce buffer (read-modify-write for writes).
 #include "xntfs_internal.h"
+#include "xntfs_cache.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -14,6 +15,7 @@
 typedef struct {
     xntfs_io io;
     int64_t pos;
+    xntfs_cache *cache;  // small writes (bitmap, MFT records) waiting to be flushed
 } dev_priv;
 
 static dev_priv *priv(struct ntfs_device *dev) { return (dev_priv *)dev->d_private; }
@@ -29,6 +31,7 @@ static int dev_open(struct ntfs_device *dev, int flags) {
 
 static int dev_sync(struct ntfs_device *dev) {
     if (NDevReadOnly(dev) || !NDevDirty(dev)) return 0;
+    if (xntfs_cache_flush(priv(dev)->cache)) return -1;
     xntfs_io *io = &priv(dev)->io;
     if (io->sync && io->sync(io->ctx) != 0) { errno = EIO; return -1; }
     NDevClearDirty(dev);
@@ -63,6 +66,10 @@ static int raw_io(xntfs_io *io, void *buf, int64_t count, int64_t offset, int wr
     return 0;
 }
 
+static int cache_raw(void *ctx, void *buf, int64_t count, int64_t offset, int write) {
+    return raw_io((xntfs_io *)ctx, buf, count, offset, write);
+}
+
 static s64 dev_xfer(struct ntfs_device *dev, void *buf, s64 count, s64 offset, int write) {
     xntfs_io *io = &priv(dev)->io;
     if (count <= 0) return 0;
@@ -73,12 +80,20 @@ static s64 dev_xfer(struct ntfs_device *dev, void *buf, s64 count, s64 offset, i
         NDevSetDirty(dev);
     }
 
+    xntfs_cache *cache = priv(dev)->cache;
+    if (write && xntfs_cache_takes(count)) {
+        return xntfs_cache_write(cache, buf, count, offset) == 0 ? count : -1;
+    }
+
     const int64_t sector = io->sector_size ? io->sector_size : 512;
     const int64_t start = offset - offset % sector;
     int64_t end = ((offset + count + sector - 1) / sector) * sector;
     if (end > io->size_bytes) end = io->size_bytes;  // device size is a whole number of sectors
     if (start == offset && end == offset + count && ((uintptr_t)buf % 16) == 0) {
-        return raw_io(io, buf, count, offset, write) == 0 ? count : -1;
+        if (raw_io(io, buf, count, offset, write) != 0) return -1;
+        // Cached blocks are newer than the device (reads) or must follow it (writes).
+        xntfs_cache_overlay(cache, buf, count, offset, write);
+        return count;
     }
 
     const int64_t span = end - start;
@@ -87,9 +102,13 @@ static s64 dev_xfer(struct ntfs_device *dev, void *buf, s64 count, s64 offset, i
     s64 result = -1;
     // Writes keep the bytes around the request: read the covering sectors first.
     if (raw_io(io, bounce, span, start, 0) == 0) {
+        xntfs_cache_overlay(cache, bounce, span, start, 0);
         if (write) {
             memcpy(bounce + (offset - start), buf, (size_t)count);
-            if (raw_io(io, bounce, span, start, 1) == 0) result = count;
+            if (raw_io(io, bounce, span, start, 1) == 0) {
+                xntfs_cache_overlay(cache, bounce, span, start, 1);
+                result = count;
+            }
         } else {
             memcpy(buf, bounce + (offset - start), (size_t)count);
             result = count;
@@ -146,6 +165,8 @@ struct ntfs_device *xntfs_device_new(const xntfs_io *io) {
     dev_priv *p = calloc(1, sizeof(*p));
     if (!p) return NULL;
     p->io = *io;
+    p->cache = xntfs_cache_new(cache_raw, &p->io, io->size_bytes);
+    if (!p->cache) { free(p); return NULL; }
     struct ntfs_device *dev = ntfs_device_alloc("xmac-ntfs", 0, &xntfs_dev_ops, p);
     if (!dev) free(p);
     return dev;
@@ -153,7 +174,14 @@ struct ntfs_device *xntfs_device_new(const xntfs_io *io) {
 
 void xntfs_device_free(struct ntfs_device *dev) {
     if (!dev) return;
-    free(dev->d_private);
+    xntfs_device_private_free(dev->d_private);
     dev->d_private = NULL;
     ntfs_device_free(dev);
+}
+
+void xntfs_device_private_free(void *private_data) {
+    dev_priv *p = private_data;
+    if (!p) return;
+    xntfs_cache_free(p->cache);
+    free(p);
 }

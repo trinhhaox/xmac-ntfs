@@ -11,6 +11,14 @@ final class NTFSEngine: @unchecked Sendable {
     private let handle: OpaquePointer
     private let deviceBox: Unmanaged<DeviceBox>
     private let gate = Gate()
+    /// Writes sit in memory (the file kept open, the small-write cache) until a sync. Flush a
+    /// second after the last change, so pulling the drive soon after copying loses nothing.
+    private let syncQueue = DispatchQueue(label: "vn.xmac.ntfs.sync")
+    private var pendingSync: DispatchWorkItem?
+    private var pendingSince: Date?
+    static let syncDelay: TimeInterval = 1
+    /// During a long copy the delay keeps moving; never hold changes back longer than this.
+    static let maxSyncDelay: TimeInterval = 5
     let readOnlyReason: ReadOnlyReason
     let isReadOnly: Bool
 
@@ -54,6 +62,7 @@ final class NTFSEngine: @unchecked Sendable {
 
     /// Idempotent; waits for calls in flight, then refuses new ones with EIO.
     func unmount() throws {
+        syncQueue.sync { pendingSync?.cancel() }
         guard gate.close() else { return }
         defer { deviceBox.release() }
         try check(xntfs_unmount(handle))
@@ -71,6 +80,25 @@ final class NTFSEngine: @unchecked Sendable {
     static func error(_ code: Int32) -> Error { fs_errorForPOSIXError(code) }
 
     func check(_ rc: Int32) throws { if rc != 0 { throw NTFSEngine.error(rc) } }
+
+    /// Debounced sync after a change; errors are logged (the next explicit sync reports them).
+    private func scheduleSync() {
+        syncQueue.async { [weak self] in
+            guard let self else { return }
+            let now = Date()
+            if let since = self.pendingSince, now.timeIntervalSince(since) >= Self.maxSyncDelay {
+                return  // the queued sync is overdue: let it run instead of postponing again
+            }
+            self.pendingSync?.cancel()
+            if self.pendingSince == nil { self.pendingSince = now }
+            let work = DispatchWorkItem { [weak self] in
+                self?.pendingSince = nil
+                do { try self?.sync() } catch { log.error("background sync: \(String(describing: error), privacy: .public)") }
+            }
+            self.pendingSync = work
+            self.syncQueue.asyncAfter(deadline: .now() + Self.syncDelay, execute: work)
+        }
+    }
 
     // MARK: - Nodes
 
@@ -105,6 +133,7 @@ final class NTFSEngine: @unchecked Sendable {
     }
 
     func create(_ name: String, in dir: UInt64, directory: Bool) throws -> xntfs_stat {
+        defer { scheduleSync() }
         var st = xntfs_stat()
         let type = UInt32(directory ? S_IFDIR : S_IFREG)
         try check(live { h in Self.newName(name).withCString { xntfs_create(h, dir, $0, type, &st) } })
@@ -112,12 +141,14 @@ final class NTFSEngine: @unchecked Sendable {
     }
 
     func remove(_ name: String, in dir: UInt64) throws {
+        defer { scheduleSync() }
         try existingName(name) { candidate in
             try check(live { h in candidate.withCString { xntfs_remove(h, dir, $0) } })
         }
     }
 
     func rename(_ name: String, in dir: UInt64, to newName: String, in newDir: UInt64) throws {
+        defer { scheduleSync() }
         try existingName(name) { candidate in
             let rc = try live { h in
                 candidate.withCString { src in
@@ -143,14 +174,19 @@ final class NTFSEngine: @unchecked Sendable {
     }
 
     func write(_ ino: UInt64, from data: Data, at offset: Int64) throws -> Int {
+        defer { scheduleSync() }
         let n = try live { h in data.withUnsafeBytes { xntfs_write(h, ino, $0.baseAddress, Int64($0.count), offset) } }
         if n < 0 { throw NTFSEngine.error(Int32(-n)) }
         return Int(n)
     }
 
-    func truncate(_ ino: UInt64, to size: UInt64) throws { try check(live { xntfs_truncate($0, ino, size) }) }
+    func truncate(_ ino: UInt64, to size: UInt64) throws {
+        defer { scheduleSync() }
+        try check(live { xntfs_truncate($0, ino, size) })
+    }
 
     func setTimes(_ ino: UInt64, birth: timespec?, modify: timespec?, access: timespec?) throws {
+        defer { scheduleSync() }
         var b = birth ?? timespec(), m = modify ?? timespec(), a = access ?? timespec()
         let rc = try live { h in
             withUnsafePointer(to: &b) { bp in
@@ -165,6 +201,7 @@ final class NTFSEngine: @unchecked Sendable {
     }
 
     func setFlags(_ ino: UInt64, set: UInt32, clear: UInt32) throws {
+        defer { scheduleSync() }
         try check(live { xntfs_set_flags($0, ino, set, clear) })
     }
 
@@ -207,6 +244,7 @@ final class NTFSEngine: @unchecked Sendable {
     enum XattrMode { case any, create, replace }
 
     func setXattr(_ name: String, of ino: UInt64, to value: Data, mode: XattrMode) throws {
+        defer { scheduleSync() }
         let flags: Int32 = mode == .create ? Int32(XNTFS_XATTR_CREATE) : mode == .replace ? Int32(XNTFS_XATTR_REPLACE) : 0
         let rc = try live { h in
             value.withUnsafeBytes { buf in
@@ -217,6 +255,7 @@ final class NTFSEngine: @unchecked Sendable {
     }
 
     func removeXattr(_ name: String, of ino: UInt64) throws {
+        defer { scheduleSync() }
         try check(live { h in name.withCString { xntfs_xattr_remove(h, ino, $0) } })
     }
 
