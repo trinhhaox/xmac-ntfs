@@ -1,0 +1,6 @@
+build/
+DerivedData/
+*.xcodeproj/
+vendor/ntfs-3g/
+vendor/build/
+*.xcarchive

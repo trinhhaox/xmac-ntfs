@@ -1,0 +1,72 @@
+name: XmacNTFS
+options:
+  bundleIdPrefix: vn.xmac
+  deploymentTarget:
+    macOS: "15.4"
+settings:
+  base:
+    DEVELOPMENT_TEAM: 4DU4BTV46U
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  XmacNTFS:
+    type: application
+    platform: macOS
+    sources: [Sources/Host]
+    info:
+      path: Sources/Host/Info.plist
+      properties:
+        CFBundleDisplayName: Xmac NTFS
+        LSUIElement: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: vn.xmac.ntfs
+    dependencies:
+      - target: XmacNTFSModule
+        embed: true
+        codeSign: true
+  XmacNTFSModule:
+    type: extensionkit-extension
+    platform: macOS
+    sources: [Sources/Module]
+    info:
+      path: Sources/Module/Info.plist
+      properties:
+        CFBundleDisplayName: Xmac NTFS
+        # ExtensionKit extensions are XPC bundles (matches Xcode's FSKit template).
+        CFBundlePackageType: XPC!
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.fskit.fsmodule
+          FSShortName: xmacntfs
+          FSSupportsBlockResources: true
+          FSSupportsGenericURLResources: false
+          FSSupportsPathURLs: false
+          FSSupportsServerURLs: false
+          FSRequiresSecurityScopedPathURLResources: false
+          FSActivateOptionSyntax: {shortOptions: "g:m:o:u:"}
+          FSCheckOptionSyntax: {shortOptions: "fnqy"}
+          FSPersonalities:
+            NTFS:
+              FSName: Windows NT File System (NTFS)
+          FSMediaTypes:
+            Windows_NTFS:
+              FSMediaProperties: {Content Hint: Windows_NTFS, Leaf: true}
+              FSProbeOrder: 500
+            EBD0A0A2-B9E5-4433-87C0-68B6B72699C7:
+              FSMediaProperties: {Content Hint: EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, Leaf: true}
+              FSProbeOrder: 1500
+    entitlements:
+      path: Sources/Module/Module.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.developer.fskit.fsmodule: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: vn.xmac.ntfs.module
+        PRODUCT_NAME: XmacNTFSModule
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Module/BridgingHeader.h
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/vendor/build/include", "$(SRCROOT)/vendor/build/include/ntfs-3g"]
+        OTHER_LDFLAGS: ["$(SRCROOT)/vendor/build/lib/libntfs-3g.a", "-framework", "CoreFoundation"]
+        GCC_C_LANGUAGE_STANDARD: gnu11
+        CLANG_WARN_DOCUMENTATION_COMMENTS: NO
