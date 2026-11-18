@@ -58,7 +58,10 @@ int xntfs_mount(const xntfs_io *io, int want_write, xntfs_vol **out, int *ro_rea
 int xntfs_unmount(xntfs_vol *vol);
 int xntfs_is_readonly(xntfs_vol *vol);
 int xntfs_sync(xntfs_vol *vol);
+/// Cheap: free space is counted once at mount and kept current by libntfs-3g.
 int xntfs_get_statfs(xntfs_vol *vol, xntfs_statfs *out);
+/// Volume label (UTF-8), empty when unset.
+int xntfs_get_label(xntfs_vol *vol, char *buf, size_t bufsize);
 
 int xntfs_getattr(xntfs_vol *vol, uint64_t ino, xntfs_stat *out);
 /// `name` is UTF-8 (NFC). ENOENT when absent.

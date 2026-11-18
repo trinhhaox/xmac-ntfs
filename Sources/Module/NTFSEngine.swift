@@ -176,10 +176,9 @@ final class NTFSEngine: @unchecked Sendable {
 
     /// Volume label, empty when unset.
     func label() -> String {
-        guard var fs = try? statfs() else { return "" }
-        return withUnsafeBytes(of: &fs.label) { raw in
-            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
-        }
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard (try? live({ xntfs_get_label($0, &buffer, buffer.count) })) == 0 else { return "" }
+        return String(cString: buffer)
     }
 
     func sync() throws { try check(live { xntfs_sync($0) }) }

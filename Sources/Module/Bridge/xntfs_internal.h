@@ -20,6 +20,7 @@
 struct xntfs_vol {
     ntfs_volume *vol;
     pthread_mutex_t lock;
+    int free_space_known;
 };
 
 struct ntfs_device *xntfs_device_new(const xntfs_io *io);

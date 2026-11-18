@@ -77,7 +77,13 @@ int xntfs_sync(xntfs_vol *v) {
 static int statfs_locked(xntfs_vol *v, xntfs_statfs *out) {
     ntfs_volume *vol = v->vol;
     memset(out, 0, sizeof(*out));
-    if (ntfs_volume_get_free_space(vol)) return errno ? errno : EIO;
+    // Counting free clusters reads the whole $Bitmap (tens of MB on a TB drive): do it on the
+    // first statfs only (a label-only probe mount never pays). libntfs-3g then keeps
+    // free_clusters / free_mft_records current as it allocates and frees.
+    if (!v->free_space_known) {
+        if (ntfs_volume_get_free_space(vol)) return errno ? errno : EIO;
+        v->free_space_known = 1;
+    }
     out->cluster_size = vol->cluster_size;
     out->total_bytes = (uint64_t)vol->nr_clusters * vol->cluster_size;
     out->free_bytes = vol->free_clusters > 0 ? (uint64_t)vol->free_clusters * vol->cluster_size : 0;
@@ -87,6 +93,13 @@ static int statfs_locked(xntfs_vol *v, xntfs_statfs *out) {
     uint64_t mft_records = (uint64_t)(vol->mft_na->initialized_size / vol->mft_record_size);
     out->total_files = mft_records + out->free_files;
     if (vol->vol_name) strlcpy(out->label, vol->vol_name, sizeof(out->label));
+    return 0;
+}
+
+int xntfs_get_label(xntfs_vol *v, char *buf, size_t bufsize) {
+    pthread_mutex_lock(&v->lock);
+    strlcpy(buf, v->vol->vol_name ? v->vol->vol_name : "", bufsize);
+    pthread_mutex_unlock(&v->lock);
     return 0;
 }
 

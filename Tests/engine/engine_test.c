@@ -74,8 +74,13 @@ static void test_write_session(const char *image) {
     CHECK(xntfs_remove(v, XNTFS_ROOT_INO, "Thư mục") == ENOTEMPTY, "rmdir non-empty");
     CHECK(xntfs_rename(v, XNTFS_ROOT_INO, "Thư mục", XNTFS_ROOT_INO, "Đổi tên") == 0, "rename non-empty dir");
     CHECK(xntfs_lookup(v, XNTFS_ROOT_INO, "Đổi tên", &st) == 0 && S_ISDIR(st.mode), "dir after rename");
+    xntfs_statfs before;
+    CHECK(xntfs_get_statfs(v, &before) == 0, "statfs before");
     CHECK(xntfs_create(v, XNTFS_ROOT_INO, "big.bin", S_IFREG, &file) == 0, "create big");
     CHECK(xntfs_write(v, file.ino, data, size, 0) == size, "write big");
+    xntfs_statfs after;
+    CHECK(xntfs_get_statfs(v, &after) == 0 && before.free_bytes - after.free_bytes >= (uint64_t)size,
+          "free space tracks writes (%llu -> %llu)", before.free_bytes, after.free_bytes);
 
     xntfs_statfs fs;
     CHECK(xntfs_get_statfs(v, &fs) == 0 && fs.total_bytes > fs.free_bytes, "statfs");
