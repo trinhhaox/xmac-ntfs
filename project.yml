@@ -61,6 +61,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.developer.fskit.fsmodule: true
+        # Status files for the host app (why a volume is read-only); see ModuleStatus.swift.
+        com.apple.security.application-groups: ["4DU4BTV46U.vn.xmac.app"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: vn.xmac.ntfs.module

@@ -159,6 +159,21 @@ final class NTFSEngine: @unchecked Sendable {
         }
     }
 
+    func symlink(_ name: String, in dir: UInt64, target: String) throws -> xntfs_stat {
+        defer { scheduleSync() }
+        var st = xntfs_stat()
+        let rc = try live { h in
+            Self.newName(name).withCString { n in target.withCString { xntfs_symlink(h, dir, n, $0, &st) } }
+        }
+        try check(rc)
+        return st
+    }
+
+    func link(_ ino: UInt64, as name: String, in dir: UInt64) throws {
+        defer { scheduleSync() }
+        try check(live { h in Self.newName(name).withCString { xntfs_link(h, ino, dir, $0) } })
+    }
+
     func readLink(_ ino: UInt64) throws -> String {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         try check(live { xntfs_readlink($0, ino, &buffer, buffer.count) })

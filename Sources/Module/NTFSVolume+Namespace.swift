@@ -70,12 +70,26 @@ extension NTFSVolume {
     func createSymbolicLink(named name: FSFileName, inDirectory directory: FSItem,
                             attributes newAttributes: FSItem.SetAttributesRequest, linkContents contents: FSFileName,
                             replyHandler reply: @escaping (FSItem?, FSFileName?, Error?) -> Void) {
-        reply(nil, nil, NTFSEngine.error(ENOTSUP))
+        do {
+            let dir = try Self.ntfsItem(directory)
+            guard let string = name.string, let target = contents.string else { throw NTFSEngine.error(EINVAL) }
+            let st = try engine.symlink(string, in: dir.ino, target: target)
+            reply(item(st.ino), name, nil)
+        } catch {
+            reply(nil, nil, error)
+        }
     }
 
     func createLink(to item: FSItem, named name: FSFileName, inDirectory directory: FSItem,
                     replyHandler reply: @escaping (FSFileName?, Error?) -> Void) {
-        reply(nil, NTFSEngine.error(ENOTSUP))
+        do {
+            let target = try Self.ntfsItem(item), dir = try Self.ntfsItem(directory)
+            guard let string = name.string else { throw NTFSEngine.error(EINVAL) }
+            try engine.link(target.ino, as: string, in: dir.ino)
+            reply(name, nil)
+        } catch {
+            reply(nil, error)
+        }
     }
 
     func readSymbolicLink(_ item: FSItem, replyHandler reply: @escaping (FSFileName?, Error?) -> Void) {

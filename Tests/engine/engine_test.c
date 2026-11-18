@@ -188,12 +188,50 @@ static void test_xattrs(const char *image) {
     close(fd); free(fork); free(back);
 }
 
+/// Symlinks keep their POSIX target exactly; hard links share one file.
+static void test_links(const char *image) {
+    int fd; xntfs_vol *v = mount_image(&fd, image, 1);
+    if (!v) return;
+    xntfs_stat f, l, st, d;
+    char target[256];
+    CHECK(xntfs_create(v, XNTFS_ROOT_INO, "gốc.txt", S_IFREG, &f) == 0, "create target");
+    CHECK(xntfs_write(v, f.ino, "hello", 5, 0) == 5, "write target");
+    const char *targets[] = { "gốc.txt", "../a/b/c", "/usr/local/bin/tool" };
+    for (int i = 0; i < 3; i++) {
+        char name[16]; snprintf(name, sizeof(name), "link%d", i);
+        CHECK(xntfs_symlink(v, XNTFS_ROOT_INO, name, targets[i], &l) == 0, "symlink %d", i);
+        CHECK(S_ISLNK(l.mode), "symlink %d mode %o", i, l.mode);
+        CHECK(xntfs_readlink(v, l.ino, target, sizeof(target)) == 0 && strcmp(target, targets[i]) == 0,
+              "readlink %d '%s'", i, target);
+    }
+    CHECK(xntfs_symlink(v, XNTFS_ROOT_INO, "link0", "x", NULL) == EEXIST, "symlink EEXIST");
+
+    CHECK(xntfs_link(v, f.ino, XNTFS_ROOT_INO, "tên khác.txt") == 0, "hard link");
+    CHECK(xntfs_lookup(v, XNTFS_ROOT_INO, "tên khác.txt", &st) == 0 && st.ino == f.ino && st.nlink == 2, "same file, nlink %u", st.nlink);
+    CHECK(xntfs_link(v, f.ino, XNTFS_ROOT_INO, "tên khác.txt") == EEXIST, "link EEXIST");
+    CHECK(xntfs_create(v, XNTFS_ROOT_INO, "thư mục link", S_IFDIR, &d) == 0, "mkdir");
+    CHECK(xntfs_link(v, d.ino, XNTFS_ROOT_INO, "dir alias") == EPERM, "no directory hard links");
+    CHECK(xntfs_remove(v, XNTFS_ROOT_INO, "gốc.txt") == 0, "remove first name");
+    char body[8] = {0};
+    CHECK(xntfs_read(v, f.ino, body, 8, 0) == 5 && memcmp(body, "hello", 5) == 0, "data kept by other name");
+    CHECK(xntfs_unmount(v) == 0, "unmount");
+    close(fd);
+
+    v = mount_image(&fd, image, 0);
+    CHECK(xntfs_lookup(v, XNTFS_ROOT_INO, "link2", &l) == 0 && S_ISLNK(l.mode), "symlink after remount");
+    CHECK(xntfs_readlink(v, l.ino, target, sizeof(target)) == 0 && strcmp(target, "/usr/local/bin/tool") == 0, "target after remount");
+    CHECK(xntfs_lookup(v, XNTFS_ROOT_INO, "tên khác.txt", &st) == 0 && st.nlink == 1, "nlink back to 1: %u", st.nlink);
+    CHECK(xntfs_unmount(v) == 0, "unmount ro");
+    close(fd);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: %s image\n", argv[0]); return 2; }
     test_write_session(argv[1]);
     test_reopen(argv[1]);
     test_rename_safety(argv[1]);
     test_xattrs(argv[1]);
+    test_links(argv[1]);
     printf(failures ? "%d FAILED\n" : "ALL PASSED\n", failures);
     return failures ? 1 : 0;
 }

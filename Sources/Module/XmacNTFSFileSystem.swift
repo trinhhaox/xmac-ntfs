@@ -49,6 +49,13 @@ final class XmacNTFSFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
             let volume = NTFSVolume(engine: engine, name: label.isEmpty ? "NTFS" : label, uuid: sector.containerUUID,
                                     ownerUID: mountOptions.uid ?? getuid(), ownerGID: mountOptions.gid ?? getgid())
             self.volume = volume
+            let reason: String
+            switch engine.readOnlyReason {
+            case .none: reason = "none"
+            case .dirty: reason = "dirty"
+            case .hibernated: reason = "hibernated"
+            }
+            ModuleStatus.publish(.init(bsdName: device.bsdName, readOnly: engine.isReadOnly, reason: reason, updatedAt: Date()))
             // FSKit rejects the load (EAGAIN, "unexpected container state") unless the container is ready.
             containerStatus = .ready
             reply(volume, nil)
@@ -59,6 +66,7 @@ final class XmacNTFSFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations,
     }
 
     func unloadResource(resource: FSResource, options: FSTaskOptions, replyHandler reply: @escaping (Error?) -> Void) {
+        if let device = resource as? FSBlockDeviceResource { ModuleStatus.clear(bsdName: device.bsdName) }
         volume = nil
         reply(nil)
     }

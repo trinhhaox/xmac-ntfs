@@ -75,7 +75,11 @@ int xntfs_readdir(xntfs_vol *vol, uint64_t dir, xntfs_dirent_cb cb, void *ctx);
 
 /// `type` is S_IFREG or S_IFDIR. EEXIST when the name is taken.
 int xntfs_create(xntfs_vol *vol, uint64_t dir, const char *name, uint32_t type, xntfs_stat *out);
-/// Target of a Windows symlink / junction or Interix symlink, as a POSIX path.
+/// Creates a symbolic link (WSL reparse point) holding `target` as given. EEXIST when taken.
+int xntfs_symlink(xntfs_vol *vol, uint64_t dir, const char *name, const char *target, xntfs_stat *out);
+/// Adds another name for file `ino` in `dir`. EPERM for directories, EEXIST when taken.
+int xntfs_link(xntfs_vol *vol, uint64_t ino, uint64_t dir, const char *name);
+/// Target of a Windows symlink / junction, WSL or Interix symlink, as a POSIX path.
 int xntfs_readlink(xntfs_vol *vol, uint64_t ino, char *buf, size_t bufsize);
 /// Removes a file, or an empty directory (ENOTEMPTY otherwise).
 int xntfs_remove(xntfs_vol *vol, uint64_t dir, const char *name);
